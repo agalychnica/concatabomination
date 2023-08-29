@@ -1,4 +1,4 @@
-# *** CONCATABOMINATIONS ***     
+# ** CONCATABOMINATIONS **     
 ![Logo_small.png](https://bitbucket.org/repo/Kb9nak/images/1207101870-Logo_small.png)
 
 
@@ -11,15 +11,15 @@ Siu-Ting K., Pisani D., Creevey C.J., Wilkinson M. (2015). Concatabominations: I
 
 ----
 
-##Download##
+## Download
 
 Download the latest version of our software [here](https://bitbucket.org/ksiuting/concatabomination/downloads).
 
-## Installation and running instructions ##
+## Installation and running instructions 
 
-For instructions on how to install and run the software refer to our **[Wiki](https://bitbucket.org/ksiuting/concatabomination/wiki/Home)** page.
+For instructions on how to install and run the software refer to our **[Wiki](https://github.com/agalychnica/concatabomination/wiki)** page.
 
-In it you can also find a **[F.A.Q](https://bitbucket.org/ksiuting/concatabomination/wiki/FAQ)** page.
+In it you can also find a **[F.A.Q](https://github.com/agalychnica/concatabomination/wiki/FAQ)** page.
 
 ----
 
