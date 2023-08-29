@@ -13,7 +13,7 @@ Siu-Ting K., Pisani D., Creevey C.J., Wilkinson M. (2015). Concatabominations: I
 
 ## Download
 
-Download the latest version of our software [here](https://bitbucket.org/ksiuting/concatabomination/downloads).
+Download the latest version of our software [here](https://github.com/agalychnica/concatabomination/archive/refs/heads/main.zip).
 
 ## Installation and running instructions 
 
