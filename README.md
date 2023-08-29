@@ -9,6 +9,8 @@ Siu-Ting K., Pisani D., Creevey C.J., Wilkinson M. (2015). Concatabominations: I
 
 **Free** access to the paper [**here**](http://sysbio.oxfordjournals.org/content/64/1/137).
 
+Disclaimer: This code also uses a perl script by (c) Jonathan Jeffery 2002, distributed in this repository as "PerlEQ_orig_version.pl".
+
 ----
 
 ## Download
