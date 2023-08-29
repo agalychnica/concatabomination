@@ -1,4 +1,4 @@
-# ** CONCATABOMINATIONS **     
+# CONCATABOMINATIONS 
 ![Logo_small.png](https://bitbucket.org/repo/Kb9nak/images/1207101870-Logo_small.png)
 
 
