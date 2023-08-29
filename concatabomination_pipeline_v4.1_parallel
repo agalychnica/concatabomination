@@ -1,0 +1,527 @@
+#!/bin/bash
+
+
+##    CONCATABOMINATION PIPELINE
+##    Copyright (C) 2014  Karen Siu Ting and Chris Creevey
+##
+##    This program is free software; you can redistribute it and/or modify
+##    it under the terms of the GNU General Public License as published by
+##    the Free Software Foundation; either version 2 of the License, or
+##    (at your option) any later version.
+##
+##    This program is distributed in the hope that it will be useful,
+##    but WITHOUT ANY WARRANTY; without even the implied warranty of
+##    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+##    GNU General Public License for more details.
+##
+##    You should have received a copy of the GNU General Public License along
+##    with this program; if not, write to the Free Software Foundation, Inc.,
+##    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+##	
+##	  Contact: agalychnica{AT}gmail{DOT}com or Chris{DOT}creevey{AT}gmail{DOT}com
+##
+
+# Argument = -i inputfile -n number -s startposition -e endposition -f filtered  -k keeptmp -b binary -p numprocessors -help help
+
+
+export COMPASSPATH=~/bin;
+export PERLEQPATH=~/bin;
+export CONCATABOMBPATH=~/bin/;
+export PINCOMPPATH=~/bin/;
+
+if [ -e /proc/cpuinfo ]; then
+    MAXPROC=`grep -c processor /proc/cpuinfo`;
+else
+    MAXPROC="unknown";
+fi
+
+##
+## START FUNCTION DEFINITIONS
+##
+
+usage()
+{
+cat << EOF
+usage: $0 -i inputfile options
+
+This script runs the concatabomination pipeline 
+
+OPTIONS:
+	-i	<input file>	
+		simplified nexus format with names of taxa in quotes
+		
+	-n	<number>		
+		Which PerEQ output to filter (table including non-informative sites = 2; or excluding them = 1) Default = 2
+
+	-s	<number> 		
+		optional set to the First step of the pipline to run, default = 1
+		
+	-e	<number>		
+		optional set to the Last step of the pipline to run, default = 12
+		
+	-f	<filtered|non-filtered>	
+		"filtered" deletes potential taxonomic equivalents prior to concatabomination (Default). 
+		"non-filtered" includes all taxa in concatabomination.
+		
+	-k	<TRUE|FALSE>			
+		keeptmp. Specifies whether to keep temporary files. By default set to FALSE.
+		
+	-b	<TRUE|FALSE>			
+		binary coding matrix. If set to "TRUE", assumes coding matrices only include "1", "0", "-" or "?". 
+		Uses fast method to calculate compatibility. Default = "FALSE";
+		
+	-p	<number>		
+		the number of processors to use at the compatibility step. Default = 1;
+		Maximum processors detected on this system = $MAXPROC
+	
+	-h
+		Displays this message
+
+EOF
+}
+
+
+
+call_compass()
+{
+# THIS FUNCTION IS WHAT IS CALLED IN PARALLEL
+#$1 is the first taxon
+#$2 is the second taxon
+#$3 is KEEPTMP
+#$4 is origscore
+#$5 is the infile
+		
+		if [[ -z "$BASHPID" ]]; then BASHPID=`echo $$; ( F='/tmp/myps'; [ ! -f $F ] && echo 'echo $PPID' > $F; )`; fi #This sets the PID for the BASH process for BASH shells less than version 4 (like in Macs)
+		SUFFIX=`echo $RANDOM.$BASHPID`;
+		
+		$CONCATABOMBPATH/concatabomb $1 $2 $5 > concatabombout.$SUFFIX
+		echo "$1	$2	$5" >> $INFILE.abomlist.txt  # capture the names of what cas been concatabombed
+
+		# Call compass on this output
+		#sed "s/'//g" < $5.abom.${1}-$2 > poto.$SUFFIX; # This gets rid of the extra apostrophes
+		tr -d "'" < $5.abom.${1}-$2 > poto.$SUFFIX; # This gets rid of the extra apostrophes
+		caca=`grep "&" poto.$SUFFIX | cut -d' ' -f1`
+		run_compass poto.$SUFFIX 1> compassout.$SUFFIX  2> compasserror.$SUFFIX; #call compass on this file
+		score=`awk '{ SUM += $1} END { print SUM }' < poto.$SUFFIX.A.plot`
+		echo "$caca $4 $score" >> $5.abomscores;
+	
+		if [ "$3" == "FALSE" ]; then rm -rf $5.abom.${1}-$2 poto.$SUFFIX* compassout.$SUFFIX compasserror.$SUFFIX concatabombout.$SUFFIX; fi;
+				
+}
+export -f call_compass;
+
+call_pairwise_compatibilities()
+{
+# THIS FUNCTION IS WHAT IS CALLED IN PARALLEL
+#$1 is the first taxon
+#$2 is the second taxon
+#$3 is KEEPTMP
+#$4 is origscore
+#$5 is the infile
+
+		if [[ -z "$BASHPID" ]]; then BASHPID=`echo $$; ( F='/tmp/myps'; [ ! -f $F ] && echo 'echo $PPID' > $F; )`; fi #This sets the PID for the BASH process for BASH shells less than version 4 (like in Macs)
+		SUFFIX=`echo $RANDOM.$BASHPID`;
+
+		$CONCATABOMBPATH/concatabomb $1 $2 $5 > concatabombout.$SUFFIX
+		echo "$1	$2	$5" >> $INFILE.abomlist.txt  # capture the names of what cas been concatabombed
+
+		grep "'" $5.abom.${1}-$2 | sed "s/^'/>/g" | tr "'" "\n" | tr -d ' ' > $5.abom.${1}-$2.fasta  # Create a fasta file version of the inout nexus file
+		caca=`grep ">.*&.*" $5.abom.${1}-$2.fasta | tr -d '>'`
+		$PINCOMPPATH/pairwise_incompatibility $5.abom.${1}-$2.fasta 1>p_incomp.out.$SUFFIX 2>p_incomp.error.$SUFFIX
+		score=`awk '{ SUM += $1} END { print SUM }' < $5.abom.${1}-$2.fasta.IncompatCounts`;
+		echo "$caca $4 $score" >> $5.abomscores;
+		
+		if [ "$3" == "FALSE" ]; then rm -rf $5.abom.${1}-$2 $5.abom.${1}-$2.fasta $5.abom.${1}-$2.fasta.IncompatCounts concatabombout.$SUFFIX p_incomp.out.$SUFFIX p_incomp.error.$SUFFIX; fi;
+		
+}
+export -f call_pairwise_compatibilities;
+
+
+change()
+{
+#$1 is the file
+#$2 is the number telling which list to use
+
+#Count the number of lists if there is only one list then there were no parsimony uninformative sites so we need to just parse the first list regardless of what the u\ser specified
+numlists=`grep "Equivalents" $1 | wc -l | tr -d ' '`;
+
+if [ "$numlists" == "2" ]; then
+
+    grep "class=\"nexusEq\"" $1 | grep -v "&nbsp" | sed -e :a -e 's/<[^>]*>//g;/</N;//ba' | grep -v "Index Taxon"  | grep -v "Missing" |  grep -v "equivalence" |  tr '\n' '#' |sed 's/$/END/' | tr '#' '\n' | sed -n '/Equivalents/,/END/p' | sed '$d' | sed '1d' | sed 's/$/ /' | sed '/)/s/^	//g' | tr -d '\n' | sed 's/$/\
+/g' | tr '\t' '\n' | sed '1d' | grep .> $1.list;
+
+
+
+else #There are two lists so we use the choice of the user
+
+    if [ "$2" == "2" ]; then
+
+        grep "class=\"nexusEq\"" $1 | grep -v "&nbsp" | sed -e :a -e 's/<[^>]*>//g;/</N;//ba' | grep -v "Index Taxon"  | grep -v "Missing" |  grep -v "equivalence" | tr '\n' '#' | sed 's/Equivalents/Equivalents_2/2' | sed 's/Equivalents/Equivalents_1/1' | sed 's/$/END/' | tr '#' '\n' | sed -n '/Equivalents_2$/,/END/p' | sed '$d' | sed '1d' | sed 's/$/ /' | sed '/)/s/^	//g' | tr -d '\n' | sed 's/$/\
+/g' | tr '\t' '\n' | sed '1d' | grep .> $1.list
+	
+
+    else
+
+        grep "class=\"nexusEq\"" $1 | grep -v "&nbsp" | sed -e :a -e 's/<[^>]*>//g;/</N;//ba' | grep -v "Index Taxon"  | grep -v "Missing" |  grep -v "equivalence" | tr '\n' '#' | sed 's/Equivalents/Equivalents_2/2' |sed 's/Equivalents/Equivalents_1/1' | sed 's/$/END/' |tr '#' '\n' |  sed -n '/Equivalents_1/,/Equivalents_2$/p' | sed '$d' | sed '1d' | sed 's/$/ /' |sed '/)/s/^	//g' | tr -d '\n' | sed 's/$/\
+/g' | tr '\t' '\n' | sed '1d' | grep .> $1.list
+	
+    fi
+
+fi
+
+
+}
+export -f change;
+
+
+run_compass()
+{
+#$1 is the input file
+$COMPASSPATH/COMPASS -i $1 -I <<EOF
+t
+t
+y
+EOF
+
+
+}
+export -f run_compass
+
+call_perlEQ()
+{
+#$1 is the input file
+rm -rf PerlEQoutput*
+perl $PERLEQPATH/PerlEQ_orig_version.pl <<EOF
+$1
+PerlEQoutput
+1
+
+EOF
+
+for i in PerlEQoutput*; do mv $i ${i/PerlEQoutput/$1}; done
+
+}
+export -f call_perlEQ
+
+##
+## END FUNCTION DEFINITIONS
+##
+
+##
+##STEP 0 process the options
+##
+
+export INFILE=
+NUMBER=2;
+START=1;
+END=12;
+KEEPTMP=FALSE;
+FILTERED="filtered";
+BINARY=FALSE
+NUMPROC=1;
+error=FALSE;
+
+
+while getopts �:hi:n:s:e:k:b:p:f:� OPTION
+do
+     case $OPTION in
+         h)
+             usage
+             exit 1
+             ;;
+         i)
+             INFILE=$OPTARG
+			 if [ ! -e $INFILE ]; then 
+				echo "ERROR cannot find file named $INFILE";
+				error=TRUE;
+			 fi
+             ;;
+         n)
+             NUMBER=$OPTARG
+			 if [ "$NUMBER" != "1" ] && [ "$NUMBER" != "2" ]; then
+				echo "ERROR -n can only be set to 1 or 2"
+				error=TRUE;
+			 fi
+             ;;
+         s)
+             START=$OPTARG
+			 if [ $START != "1" ] && [ $START != "2" ] && [ $START != "3" ] && [ $START != "4" ] && [ $START != "5" ] && [ $START != "6" ] && [ $START != "7" ] && [ $START != "8" ] && [ $START != "9" ] && [ $START != "10" ] && [ $START != "11" ] && [ $START != "12" ]; then
+				echo "ERROR -s must be set to a number between 1 and 12"
+				error=TRUE;
+			 fi
+             ;;
+        e)
+             END=$OPTARG
+			 if [ $END != "1"  ] && [ $END != "2" ] && [ $END != "3" ] && [ $END != "4" ] && [ $END != "5" ] && [ $END != "6" ] && [ $END != "7" ] && [ $END != "8" ] && [ $END != "9" ] && [ $END != "10" ] && [ $END != "11" ] && [ $END != "12" ]; then
+				echo "ERROR -e must be set to a number between 1 and 12"
+				error=TRUE;
+			 fi
+             ;;
+        k)
+             KEEPTMP=$OPTARG
+			 if [ $KEEPTMP != "TRUE" ] && [ $KEEPTMP != "FALSE" ]; then 
+				echo "ERROR -k must be set to TRUE or FALSE";
+				error=TRUE;
+			 fi
+             ;;
+        b)
+             BINARY=$OPTARG
+			 if [ "$BINARY" != "TRUE" ] && [ "$BINARY" != "FALSE" ]; then 
+				echo "ERROR -b must be set to TRUE or FALSE";
+				error=TRUE;
+			 fi
+             ;;
+		p)
+             NUMPROC=$OPTARG
+			 if [ $NUMPROC -lt 1 ]; then 
+				echo "ERROR -p must set to a value greater than 0";
+				error=TRUE;
+			 fi
+                        if [ $MAXPROC != "unknown" ]; then
+                           if [ $NUMPROC -gt $MAXPROC ]; then 
+                            echo "WARNING: -p set to a value greater than the number of processors detected ( $MAXPROC )";
+                            echo "Continuing...";
+                            fi
+                        fi
+             ;;
+		f)
+			FILTERED=$OPTARG
+			if [ $FILTERED != "filtered" ] && [ $FILTERED != "non-filtered" ]; then
+				echo "ERROR -f must be set to \"filtered\" or \"non-filtered\"";
+				error=TRUE;
+			fi
+			;;
+		\?)
+		   error=TRUE;
+		   ;;
+		\:) 
+		   error=TRUE;
+		   ;;
+
+     esac
+done
+
+
+
+if [[ -z $INFILE ]]  # This checks if INFILE has been assigned to anything, if not, then nothing was passed to the script and we pirint the usage message and exit.
+then
+     usage
+     exit 1
+fi
+
+
+##
+## Step1: check that all dependancies are present
+##
+
+if [ ! -e $COMPASSPATH/COMPASS ]; then echo "ERROR cannot find COMPASS at $COMPASSPATH, please check the path definition on line 5 of the script is correct."; error=TRUE; fi;
+if [ ! -e $PERLEQPATH/PerlEQ_orig_version.pl ]; then echo "ERROR cannot find PerlEQ_orig_version.pl at $PERLEQPATH; please check that the path definition on line 6 of the script is correct"; error=TRUE; fi;
+if [ ! -e $CONCATABOMBPATH/concatabomb ]; then echo "ERROR cannot find concatabomb at $CONCATABOMBPATH; please check that the path definition on line 7 of the script is correct"; error=TRUE; fi;
+if [ ! -e $PINCOMPPATH/pairwise_incompatibility ]; then echo "ERROR cannot find pairwise_incompatibility at $PINCOMPPATH; please check that the path definition on line 8 of the script is correct"; error=TRUE; fi;
+
+
+
+if [ "$error" == "FALSE" ]; then
+	
+	echo "Running concatabomination pipeline, starting at step $START and ending at step $END";
+
+##
+## Step 2: Introducing data and parameters:
+##
+ 
+    
+    # Specify whether to use the first or second list from the htm file
+    # If this is not specified it automatically uses only the first list
+    uselist=$NUMBER;
+
+    #create a variable containg the start of the outputf filenames from PerlEQ
+    file=`echo $INFILE`;
+
+##    
+## Step3: Run Perl TaxEQ
+##
+	if [ "$START" -le 3 ] && [ "$END" -ge 3 ]; then
+		echo "starting Step 3";
+	
+		rm -rf $file.htm* 
+		call_perlEQ $INFILE  1> perlEQout 2> perlEQerror
+		
+		if [ "$KEEPTMP" == "FALSE" ]; then rm -rf perlEQout perlEQerror; fi
+		
+	fi
+
+##
+## Step4: Extract list from output file of PerlTaxEQ
+##
+	if [ "$START" -le 4 ] && [ "$END" -ge 4 ]; then
+		echo "starting Step 4";
+		
+		rm -rf ${file}.htm.list;
+		change ${file}.htm $uselist;
+	fi
+
+##	
+## Step5: Filter all taxa with potential equivalents with categories A, B or C
+##
+	if [ "$START" -le 5 ] && [ "$END" -ge 5 ]; then
+		echo "starting Step 5";
+	
+		rm -rf ${file}.htm.list.1 grepfile.txt sedfile.txt;
+		if [ "$FILTERED" == "TRUE" ]; then
+			grep  "([ABC]\**)" ${file}.htm.list | sed 's/  *(/+(/g' | tr ' ' '\n' | grep "([ABC]\**)" | cut -d'+' -f1 | sort | uniq  | sed 's/^/^/' | sed 's/$/ /' > grepfile.txt
+			grep  "([ABC]\**)" ${file}.htm.list | sed 's/  *(/+(/g' | tr ' ' '\n' | grep "([ABC]\**)" | cut -d'+' -f1 | sort | uniq  | sed "s/^/s\/ /" | sed "s/$/  *\([ABCDE]\\\**\),*\/\/\g/" > sedfile.txt
+			grep -v -f grepfile.txt ${file}.htm.list | sed -f sedfile.txt |  sed 's/, *$//' | grep "(" > ${file}.htm.list.1
+		else
+			cp ${file}.htm.list ${file}.htm.list.1
+		fi
+		
+		if [ "$KEEPTMP" == "FALSE" ]; then rm -rf grepfile.txt sedfile.txt; fi;
+	fi
+
+##	
+## Step6: create a file for each taxa to be combined with its potential equivalents (splitting the list)
+##
+	if [ "$END" -ge 6 ]; then # If the section we want to run is after step 6, then we need to let it through here
+		echo "starting Step 6 (needed for steps 8 onwards)";
+		
+		rm -rf split.*;
+		len2=`cat ${file}.htm.list.1 | wc -l | tr -d ' '` 
+		if [ "$len2" != 0 ]; then
+			split -l 1 ${file}.htm.list.1 split.
+		
+		##
+		## Step7: Calculate the compatability score for the original file
+		##
+			if [ "$END" -ge 7 ]; then  # We need the value of origscore to be calulated if we are going to run any steps after step 7
+				echo "starting Step 7 (needed for steps 8 onwards)";
+				
+				rm -rf poto.* compassout* compasserror* p_incomp.error* p_incomp.out*;
+
+				if [ "$BINARY" == "FALSE" ]; then  # USE COMPASS
+				
+					
+					sed "s/'//g" < $INFILE > poto; # This gets rid of the extra apostrophes
+					run_compass poto 1> compassout 2>compasserror #call compass on this file
+					origscore=`awk '{ SUM += $1} END { print SUM }' < poto.A.plot`
+					
+					if [ "$KEEPTMP" == "FALSE" ]; then rm -rf poto* compassout compasserror; fi;
+					
+					
+				else  # USE PAIRWISE_INCOMPATIBILITIES
+				
+					grep "'" $INFILE | sed "s/^'/>/g" | tr "'" "\n" | tr -d ' ' > $INFILE.fasta  # Create a fasta file version of the inout nexus file
+					$PINCOMPPATH/pairwise_incompatibility $INFILE.fasta 1>p_incomp.out 2>p_incomp.error
+					origscore=`awk '{ SUM += $1} END { print SUM }' < $INFILE.fasta.IncompatCounts`;
+					
+					if [ "$KEEPTMP" == "FALSE" ]; then rm -rf $INFILE.fasta $INFILE.fasta.IncompatCounts p_incomp.out p_incomp.error; fi;
+				fi
+			fi
+					
+		##	
+		## Step8 & 9: For each of the split files, run cancatabomb and then call COMPASS on the output and get the compatability score
+		##
+			if [ "$START" -le 8 ] && [ "$END" -ge 9 ]; then
+				echo "starting Steps 8 & 9";
+				
+				rm -rf *.abom.* lk concatabombout $INFILE.abomlist.txt $INFILE.abomscores commands.txt commands.filtered.txt poto* concatabombout* #this deletes any .abom files that could have been generated before
+		
+				for i in split.*; do 
+					sed 's/ /\
+/' < $i | sed 's/,/\
+/g' | sed 's/^ *//g' > lk;
+					first=`head -1 lk`;
+					# For this split file create all the concatabominations 1 per file
+					grep "(D)" lk | sed 's/^ //g' | cut -d' ' -f1 > catlist
+					
+					for j in $(<catlist); do # Create command for each of the (D)'s from this split and put in file for passing to xargs for parallel processing.
+					
+						echo "$first $j $KEEPTMP $origscore $INFILE" >> commands.txt
+					
+					done;
+				done;
+
+				# REMOVE DUPLICATES OF PAIRS OF TAXA FROM THE COMMANDS LIST (LOOKING FOR INSTANCES WHERE THEY ARE IN REVERSE ORDER)
+				cat commands.txt | awk '{ if ( $1"."$2 in array == 0) { array[$1"."$2]=TRUE; array[$2"."$1]=TRUE; print $0 } }' > commands.filtered.txt
+				
+				
+
+				if [ "$BINARY" == "FALSE" ]; then  # USE COMPASS			
+
+					cat commands.filtered.txt | xargs -P $NUMPROC -I % bash -c 'call_compass %';
+				
+				else  # USE PAIRWISE_INCOMPATIBILITIES
+
+					cat commands.filtered.txt | xargs -P $NUMPROC -I % bash -c 'call_pairwise_compatibilities %';
+				fi
+
+	
+				if [ "$KEEPTMP" == "FALSE" ]; then rm -rf split.* lk compassout compasserror catlist commands.filtered.txt commands.txt; fi;
+			fi
+		##
+		## Step10: Now go through the results and only keep the results that are unique or one copy of a comparison that is repeated
+		##
+			if [ "$START" -le 10 ] && [ "$END" -ge 10 ]; then
+				echo "starting Step 10";
+				
+				cp $INFILE.abomscores $INFILE.abomscores.uniq; # We no longer need to get rid of duplicates here as it has been done already in step 9;
+
+
+				if [ "$NUMBER" != "2" ]; then end=1; else end=2; fi
+
+				grep " ${origscore} ${origscore}$" $INFILE.abomscores.uniq | cut -d' ' -f1 | sed 's/&/\
+/g' | sort | uniq -c | sort -rn > $INFILE.comprank${end}
+
+			fi
+
+		##
+		## Step11: Creates the final list of taxonomic equivalents
+		##
+			if [ "$START" -le 11 ] && [ "$END" -ge 11 ]; then
+				echo "starting Step 11";
+	
+				rm -rf taxalist newsplit.* countABCE tmplist ${INFILE}.completelist.txt
+	
+				cut -d" " -f1 ${file}.htm.list > taxalist
+				split -l 1 ${file}.htm.list newsplit.
+				for i in newsplit.*; do grep -o "([ABCE]\**)" $i | wc -l; done > countABCE
+				paste taxalist countABCE > tmplist
+
+				long=`cat tmplist | wc -l | tr -d ' '`; 
+				for (( i=1; "$i"<="$long"; i+=1 )); do 
+					line=`head -$i tmplist | tail -1`; 
+					name=` echo $line | cut -d' ' -f1`; #name of taxon
+					num=`echo $line | cut -d' ' -f2`;  #number of taxonomic equivalents ABCE
+					otherdata=`grep $name $INFILE.comprank${end}`; #number of real taxonomic equivalents after concatabomination
+					othernum=0;  
+					if [ "$otherdata" != "" ]; then 
+						othernum=`echo $otherdata | cut -d' ' -f1`; 
+					fi; 
+					total=`expr $othernum + $num`; 
+					echo "$name $othernum $num $total ";
+				done | sort -k4,4rn > ${INFILE}.completelist.txt
+				
+			if [ "$KEEPTMP" == "FALSE" ]; then rm -rf taxalist newsplit.* countABCE tmplist; fi;	
+			
+			fi
+
+		##
+		## Step12 Combine the Taxonomic equivalents from TaxEQ with those identified by the concatabomination approach into a sim file for use in cytoscape
+		##
+			if [ "$START" -le 12 ] && [ "$END" -ge 12 ]; then
+				echo "starting Step 12";
+				grep " ${origscore} ${origscore}$" $INFILE.abomscores.uniq | cut -d' ' -f1 | tr '&' '\t' | awk '{ print $1"\tD\t"$2; print $2"\tD\t"$1}' > $INFILE.taxonomicEqiv.sim.txt
+				cat ${file}.htm.list | tr -d ',' | awk '{print $1"\tNA\t"$1; for (i=2; i<=NF;i=i+2) { print $1"\t"$(i+1)"\t"$i}}'| tr -d '*' | tr -d '(' | tr -d ')' | grep -v "	D	" >> $INFILE.taxonomicEqiv.sim.txt
+
+			fi
+
+		else # This else matches the IF in step 6 to check if there was anything to combine.
+			echo "nothing passing filter"
+		fi 
+	
+	fi # This is the matching fi to the IF at step 6 that says if the section we want to run is at or after step 6
+
+else
+	exit 0;
+fi # This is the end of the if not error statement at the beginning
+
+
